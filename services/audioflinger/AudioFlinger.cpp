@@ -1,6 +1,7 @@
 /*
 **
 ** Copyright 2007, The Android Open Source Project
+** Copyright (c) 2012, Code Aurora Forum. All rights reserved.
 **
 ** Licensed under the Apache License, Version 2.0 (the "License");
 ** you may not use this file except in compliance with the License.
@@ -199,11 +200,13 @@ static int load_audio_interface(const char *if_name, audio_hw_device_t **dev)
     if (rc) {
         goto out;
     }
+#ifndef ICS_AUDIO_BLOB
     if ((*dev)->common.version != AUDIO_DEVICE_API_VERSION_CURRENT) {
         ALOGE("%s wrong audio hw device version %04x", __func__, (*dev)->common.version);
         rc = BAD_VALUE;
         goto out;
     }
+#endif
     return 0;
 
 out:
@@ -211,6 +214,12 @@ out:
     return rc;
 }
 
+#ifdef QCOM_HARDWARE
+static uint32_t getInputChannelCount(uint32_t channels) {
+   // only mono or stereo is supported for input sources
+   return popcount((channels) & (AUDIO_CHANNEL_IN_STEREO | AUDIO_CHANNEL_IN_MONO));
+}
+#endif
 // ----------------------------------------------------------------------------
 
 AudioFlinger::AudioFlinger()
@@ -741,6 +750,7 @@ bool AudioFlinger::masterMute() const
 
 float AudioFlinger::masterVolume_l() const
 {
+#ifndef ICS_AUDIO_BLOB
     if (MVS_FULL == mMasterVolumeSupportLvl) {
         float ret_val;
         AutoMutex lock(mHardwareLock);
@@ -754,6 +764,7 @@ float AudioFlinger::masterVolume_l() const
         mHardwareStatus = AUDIO_HW_IDLE;
         return ret_val;
     }
+#endif
 
     return mMasterVolume;
 }
@@ -978,7 +989,11 @@ size_t AudioFlinger::getInputBufferSize(uint32_t sampleRate, audio_format_t form
         channel_mask: audio_channel_in_mask_from_count(channelCount),
         format: format,
     };
+#ifndef ICS_AUDIO_BLOB
     size_t size = mPrimaryHardwareDev->get_input_buffer_size(mPrimaryHardwareDev, &config);
+#else
+    size_t size = mPrimaryHardwareDev->get_input_buffer_size(mPrimaryHardwareDev, sampleRate, format, channelCount);
+#endif
     mHardwareStatus = AUDIO_HW_IDLE;
     return size;
 }
@@ -1032,6 +1047,28 @@ status_t AudioFlinger::getRenderPosition(uint32_t *halFrames, uint32_t *dspFrame
 
     return BAD_VALUE;
 }
+
+#if defined(QCOM_HARDWARE) && defined(QCOM_FM_ENABLED)
+status_t AudioFlinger::setFmVolume(float value)
+{
+    status_t ret = initCheck();
+    if (ret != NO_ERROR) {
+        return ret;
+    }
+
+    // check calling permissions
+    if (!settingsAllowed()) {
+        return PERMISSION_DENIED;
+    }
+
+    AutoMutex lock(mHardwareLock);
+    mHardwareStatus = AUDIO_SET_FM_VOLUME;
+    ret = mPrimaryHardwareDev->set_fm_volume(mPrimaryHardwareDev, value);
+    mHardwareStatus = AUDIO_HW_IDLE;
+
+    return ret;
+}
+#endif
 
 void AudioFlinger::registerClient(const sp<IAudioFlingerClient>& client)
 {
@@ -2804,10 +2841,12 @@ void AudioFlinger::MixerThread::threadLoop_mix()
     int64_t pts;
     status_t status = INVALID_OPERATION;
 
+#ifndef ICS_AUDIO_BLOB
     if (NULL != mOutput->stream->get_next_write_timestamp) {
         status = mOutput->stream->get_next_write_timestamp(
                 mOutput->stream, &pts);
     }
+#endif
 
     if (status != NO_ERROR) {
         pts = AudioBufferProvider::kInvalidPTS;
@@ -4123,7 +4162,33 @@ AudioFlinger::ThreadBase::TrackBase::TrackBase(
     // ALOGD("Creating track with %d buffers @ %d bytes", bufferCount, bufferSize);
     size_t size = sizeof(audio_track_cblk_t);
     uint8_t channelCount = popcount(channelMask);
+#ifdef QCOM_HARDWARE
+    size_t bufferSize = 0;
+    if ( (format == AUDIO_FORMAT_PCM_16_BIT) ||
+         (format == AUDIO_FORMAT_PCM_8_BIT))
+    {
+        bufferSize = frameCount*channelCount*sizeof(int16_t);
+    }
+    else if (format == AUDIO_FORMAT_AMR_NB)
+    {
+        bufferSize = frameCount*channelCount*32; // full rate frame size
+    }
+    else if (format == AUDIO_FORMAT_EVRC)
+    {
+        bufferSize = frameCount*channelCount*23; // full rate frame size
+    }
+    else if (format == AUDIO_FORMAT_QCELP)
+    {
+        bufferSize = frameCount*channelCount*35; // full rate frame size
+    }
+    else if (format == AUDIO_FORMAT_AAC)
+    {
+        bufferSize = frameCount*2048; // full rate frame size
+    }
+#else
     size_t bufferSize = frameCount*channelCount*sizeof(int16_t);
+#endif
+
     if (sharedBuffer == 0) {
         size += bufferSize;
     }
@@ -4146,7 +4211,32 @@ AudioFlinger::ThreadBase::TrackBase::TrackBase(
                 mChannelMask = channelMask;
                 if (sharedBuffer == 0) {
                     mBuffer = (char*)mCblk + sizeof(audio_track_cblk_t);
+#ifdef QCOM_HARDWARE
+                    // Change for Codec type
+                    if ( (format == AUDIO_FORMAT_PCM_16_BIT) ||
+                    (format == AUDIO_FORMAT_PCM_8_BIT))
+                    {
+                       memset(mBuffer, 0, frameCount*channelCount*sizeof(int16_t));
+                    }
+                    else if (format == AUDIO_FORMAT_AMR_NB)
+                    {
+                       memset(mBuffer, 0, frameCount*channelCount*32); // full rate frame size
+                    }
+                    else if (format == AUDIO_FORMAT_EVRC)
+                    {
+                       memset(mBuffer, 0, frameCount*channelCount*23); // full rate frame size
+                    }
+                    else if (format == AUDIO_FORMAT_QCELP)
+                    {
+                       memset(mBuffer, 0, frameCount*channelCount*35); // full rate frame size
+                    }
+                    else if (format == AUDIO_FORMAT_AAC)
+                    {
+                       memset(mBuffer, 0, frameCount*2048); // full rate frame size
+                    }
+#else
                     memset(mBuffer, 0, frameCount*channelCount*sizeof(int16_t));
+#endif
                     // Force underrun condition to avoid false underrun callback until first data is
                     // written to buffer (other flags are cleared)
                     mCblk->flags = CBLK_UNDERRUN_ON;
@@ -4249,13 +4339,23 @@ void* AudioFlinger::ThreadBase::TrackBase::getBuffer(uint32_t offset, uint32_t f
     int8_t *bufferEnd = bufferStart + frames * frameSize;
 
     // Check validity of returned pointer in case the track control block would have been corrupted.
+#ifdef QCOM_HARDWARE
+    if (bufferStart < mBuffer || bufferStart > bufferEnd || bufferEnd > mBufferEnd){
+        ALOGE("TrackBase::getBuffer buffer out of range:\n    start: %p, end %p , mBuffer %p mBufferEnd %p\n    \
+                server %d, serverBase %d, user %d, userBase %d",
+                bufferStart, bufferEnd, mBuffer, mBufferEnd,
+                cblk->server, cblk->serverBase, cblk->user, cblk->userBase);
+        return 0;
+    }
+#else
     ALOG_ASSERT(!(bufferStart < mBuffer || bufferStart > bufferEnd || bufferEnd > mBufferEnd),
             "TrackBase::getBuffer buffer out of range:\n"
+
                 "    start: %p, end %p , mBuffer %p mBufferEnd %p\n"
                 "    server %u, serverBase %u, user %u, userBase %u, frameSize %d",
                 bufferStart, bufferEnd, mBuffer, mBufferEnd,
                 cblk->server, cblk->serverBase, cblk->user, cblk->userBase, frameSize);
-
+#endif
     return bufferStart;
 }
 
@@ -5341,12 +5441,25 @@ AudioFlinger::RecordThread::RecordTrack::RecordTrack(
                   channelMask, frameCount, 0 /*sharedBuffer*/, sessionId),
         mOverflow(false)
 {
+#ifdef QCOM_HARDWARE
+    uint8_t channelCount = popcount(channelMask);
+#endif
     if (mCblk != NULL) {
         ALOGV("RecordTrack constructor, size %d", (int)mBufferEnd - (int)mBuffer);
         if (format == AUDIO_FORMAT_PCM_16_BIT) {
             mCblk->frameSize = mChannelCount * sizeof(int16_t);
         } else if (format == AUDIO_FORMAT_PCM_8_BIT) {
             mCblk->frameSize = mChannelCount * sizeof(int8_t);
+#ifdef QCOM_HARDWARE
+        } else if (format == AUDIO_FORMAT_AMR_NB) {
+            mCblk->frameSize = channelCount * 32;
+        } else if (format == AUDIO_FORMAT_EVRC) {
+            mCblk->frameSize = channelCount * 23;
+        } else if (format == AUDIO_FORMAT_QCELP) {
+            mCblk->frameSize = channelCount * 35;
+        } else if (format == AUDIO_FORMAT_AAC) {
+            mCblk->frameSize = 2048;
+#endif
         } else {
             mCblk->frameSize = sizeof(int8_t);
         }
@@ -5849,13 +5962,25 @@ sp<IAudioRecord> AudioFlinger::openRecord(
     RecordThread *thread;
     size_t inFrameCount;
     int lSessionId;
-
+#ifdef QCOM_HARDWARE
+    size_t inputBufferSize = 0;
+    uint32_t channelCount = popcount(channelMask);
+#endif
     // check calling permissions
     if (!recordingAllowed()) {
         lStatus = PERMISSION_DENIED;
         goto Exit;
     }
 
+#ifdef QCOM_HARDWARE
+    // Check that audio input stream accepts requested audio parameters
+    inputBufferSize = getInputBufferSize(sampleRate, format, channelCount);
+    if (inputBufferSize == 0) {
+        lStatus = BAD_VALUE;
+        ALOGE("Bad audio input parameters: sampling rate %u, format %d, channels %d",  sampleRate, format, channelCount);
+        goto Exit;
+    }
+#endif
     // add client to list
     { // scope for mLock
         Mutex::Autolock _l(mLock);
@@ -5876,6 +6001,33 @@ sp<IAudioRecord> AudioFlinger::openRecord(
                 *sessionId = lSessionId;
             }
         }
+#ifdef QCOM_HARDWARE
+        // frameCount must be a multiple of input buffer size
+        // Change for Codec type
+        uint8_t channelCount = popcount(channelMask);
+        if ((format == AUDIO_FORMAT_PCM_16_BIT) ||
+            (format == AUDIO_FORMAT_PCM_8_BIT))
+        {
+          inFrameCount = inputBufferSize/channelCount/sizeof(short);
+        }
+        else if (format == AUDIO_FORMAT_AMR_NB)
+        {
+          inFrameCount = inputBufferSize/channelCount/32;
+        }
+        else if (format == AUDIO_FORMAT_EVRC)
+        {
+          inFrameCount = inputBufferSize/channelCount/23;
+        }
+        else if (format == AUDIO_FORMAT_QCELP)
+        {
+          inFrameCount = inputBufferSize/channelCount/35;
+        }
+        else if (format == AUDIO_FORMAT_AAC)
+        {
+          inFrameCount = inputBufferSize/2048;
+        }
+        frameCount = ((frameCount - 1)/inFrameCount + 1) * inFrameCount;
+#endif
         // create new record track. The record track uses one track in mHardwareMixerThread by convention.
         recordTrack = thread->createRecordTrack_l(client,
                                                 sampleRate,
@@ -5947,7 +6099,11 @@ AudioFlinger::RecordThread::RecordThread(const sp<AudioFlinger>& audioFlinger,
     ThreadBase(audioFlinger, id, device, RECORD),
     mInput(input), mTrack(NULL), mResampler(NULL), mRsmpOutBuffer(NULL), mRsmpInBuffer(NULL),
     // mRsmpInIndex and mInputBytes set by readInputParameters()
+#ifdef QCOM_HARDWARE
+    mReqChannelCount(getInputChannelCount(channels)),
+#else
     mReqChannelCount(popcount(channels)),
+#endif
     mReqSampleRate(sampleRate)
     // mBytesRead is only meaningful while active, and so is cleared in start()
     // (but might be better to also clear here for dump?)
@@ -6084,9 +6240,26 @@ bool AudioFlinger::RecordThread::threadLoop()
                             }
                         }
                         if (framesOut && mFrameCount == mRsmpInIndex) {
+#ifdef QCOM_HARDWARE
+                            if (((int) framesOut != mFrameCount) &&
+                                ((mFormat != AUDIO_FORMAT_PCM_16_BIT)&&
+                                  ((audio_source_t)mInputSource != AUDIO_SOURCE_VOICE_COMMUNICATION))) {
+                                mBytesRead = mInput->stream->read(mInput->stream, buffer.raw, buffer.frameCount * mFrameSize);
+                                ALOGE("IR mBytesRead = %d",mBytesRead);
+                                if(mBytesRead >= 0 ){
+                                  buffer.frameCount = mBytesRead/mFrameSize;
+                                }
+                                framesOut = 0;
+                            } else
+#endif
                             if (framesOut == mFrameCount &&
                                 ((int)mChannelCount == mReqChannelCount || mFormat != AUDIO_FORMAT_PCM_16_BIT)) {
                                 mBytesRead = mInput->stream->read(mInput->stream, buffer.raw, mInputBytes);
+#ifdef QCOM_HARDWARE
+                                if( mBytesRead >= 0 ){
+                                  buffer.frameCount = mBytesRead/mFrameSize;
+                                }
+#endif
                                 framesOut = 0;
                             } else {
                                 mBytesRead = mInput->stream->read(mInput->stream, mRsmpInBuffer, mInputBytes);
@@ -6486,7 +6659,11 @@ bool AudioFlinger::RecordThread::checkForNewParameters_l()
             reconfig = true;
         }
         if (param.getInt(String8(AudioParameter::keyChannels), value) == NO_ERROR) {
+#ifdef QCOM_HARDWARE
+            reqChannelCount = getInputChannelCount(value);
+#else
             reqChannelCount = popcount(value);
+#endif
             reconfig = true;
         }
         if (param.getInt(String8(AudioParameter::keyFrameCount), value) == NO_ERROR) {
@@ -6535,7 +6712,11 @@ bool AudioFlinger::RecordThread::checkForNewParameters_l()
                     reqFormat == mInput->stream->common.get_format(&mInput->stream->common) &&
                     reqFormat == AUDIO_FORMAT_PCM_16_BIT &&
                     ((int)mInput->stream->common.get_sample_rate(&mInput->stream->common) <= (2 * reqSamplingRate)) &&
+#ifdef QCOM_HARDWARE
+                    getInputChannelCount(mInput->stream->common.get_channels(&mInput->stream->common)) <= FCC_2 &&
+#else
                     popcount(mInput->stream->common.get_channels(&mInput->stream->common)) <= FCC_2 &&
+#endif
                     (reqChannelCount <= FCC_2)) {
                     status = NO_ERROR;
                 }
@@ -6606,7 +6787,11 @@ void AudioFlinger::RecordThread::readInputParameters()
 
     mSampleRate = mInput->stream->common.get_sample_rate(&mInput->stream->common);
     mChannelMask = mInput->stream->common.get_channels(&mInput->stream->common);
+#ifdef QCOM_HARDWARE
+    mChannelCount = (uint16_t)getInputChannelCount(mChannelMask);
+#else
     mChannelCount = (uint16_t)popcount(mChannelMask);
+#endif
     mFormat = mInput->stream->common.get_format(&mInput->stream->common);
     mFrameSize = audio_stream_frame_size(&mInput->stream->common);
     mInputBytes = mInput->stream->common.get_buffer_size(&mInput->stream->common);
@@ -6788,12 +6973,23 @@ audio_io_handle_t AudioFlinger::openOutput(audio_module_handle_t module,
 
     mHardwareStatus = AUDIO_HW_OUTPUT_OPEN;
 
+#ifndef ICS_AUDIO_BLOB
     status = outHwDev->open_output_stream(outHwDev,
                                           id,
                                           *pDevices,
                                           (audio_output_flags_t)flags,
                                           &config,
                                           &outStream);
+#else
+    status = outHwDev->open_output_stream(outHwDev,
+                                          *pDevices,
+                                          (int *)&config.format,
+                                          &config.channel_mask,
+                                          &config.sample_rate,
+                                          &outStream);
+    uint32_t newflags = flags | AUDIO_OUTPUT_FLAG_PRIMARY;
+    flags = (audio_output_flags_t)newflags;
+#endif
 
     mHardwareStatus = AUDIO_HW_IDLE;
     ALOGV("openOutput() openOutputStream returned output %p, SamplingRate %d, Format %d, Channels %x, status %d",
@@ -6840,10 +7036,13 @@ audio_io_handle_t AudioFlinger::openOutput(audio_module_handle_t module,
             mMasterVolumeSupportLvl = MVS_NONE;
 
             mHardwareStatus = AUDIO_HW_GET_MASTER_VOLUME;
+#ifndef ICS_AUDIO_BLOB
             if ((NULL != outHwDev->get_master_volume) &&
                 (NO_ERROR == outHwDev->get_master_volume(outHwDev, &initialVolume))) {
                 mMasterVolumeSupportLvl = MVS_FULL;
-            } else {
+            } else 
+#endif
+            {
                 mMasterVolumeSupportLvl = MVS_SETONLY;
                 initialVolume = 1.0;
             }
@@ -6996,8 +7195,16 @@ audio_io_handle_t AudioFlinger::openInput(audio_module_handle_t module,
 
     audio_io_handle_t id = nextUniqueId();
 
+#ifndef ICS_AUDIO_BLOB
     status = inHwDev->open_input_stream(inHwDev, id, *pDevices, &config,
                                         &inStream);
+#else
+    status = inHwDev->open_input_stream(inHwDev, *pDevices, 
+                                        (int *)&config.format, 
+                                        &config.channel_mask,
+                                        &config.sample_rate, (audio_in_acoustics_t)0,
+                                        &inStream);
+#endif
     ALOGV("openInput() openInputStream returned input %p, SamplingRate %d, Format %d, Channels %x, status %d",
             inStream,
             config.sample_rate,
@@ -7011,10 +7218,23 @@ audio_io_handle_t AudioFlinger::openInput(audio_module_handle_t module,
     if (status == BAD_VALUE &&
         reqFormat == config.format && config.format == AUDIO_FORMAT_PCM_16_BIT &&
         (config.sample_rate <= 2 * reqSamplingRate) &&
-        (popcount(config.channel_mask) <= FCC_2) && (popcount(reqChannels) <= FCC_2)) {
+#ifdef QCOM_HARDWARE
+        (getInputChannelCount(config.channel_mask) <= FCC_2) && (getInputChannelCount(reqChannels) <= FCC_2))
+#else
+        (popcount(config.channel_mask) <= FCC_2) && (popcount(reqChannels) <= FCC_2))
+#endif
+    {
         ALOGV("openInput() reopening with proposed sampling rate and channels");
         inStream = NULL;
+#ifndef ICS_AUDIO_BLOB
         status = inHwDev->open_input_stream(inHwDev, id, *pDevices, &config, &inStream);
+#else
+        status = inHwDev->open_input_stream(inHwDev, *pDevices, 
+                                        (int *)&config.format, 
+                                        &config.channel_mask,
+                                        &config.sample_rate, (audio_in_acoustics_t)0,
+                                        &inStream);
+#endif
     }
 
     if (status == NO_ERROR && inStream != NULL) {
