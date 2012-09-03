@@ -87,6 +87,9 @@ private:
     struct ExecutingToIdleState;
     struct IdleToLoadedState;
     struct FlushingState;
+#ifdef QCOM_HARDWARE
+    struct FlushingOutputState;
+#endif
 
     enum {
         kWhatSetup                   = 'setu',
@@ -175,6 +178,9 @@ private:
     status_t freeBuffer(OMX_U32 portIndex, size_t i);
 
     status_t allocateOutputBuffersFromNativeWindow();
+#ifdef EXYNOS4_ENHANCEMENTS
+    void setNativeWindowColorFormat(OMX_COLOR_FORMATTYPE &eNativeColorFormat);
+#endif
     status_t cancelBufferToNativeWindow(BufferInfo *info);
     status_t freeOutputBuffersNotOwnedByComponent();
     BufferInfo *dequeueBufferFromNativeWindow();
@@ -250,6 +256,10 @@ private:
     void signalError(
             OMX_ERRORTYPE error = OMX_ErrorUndefined,
             status_t internalError = UNKNOWN_ERROR);
+
+#ifdef QCOM_HARDWARE
+    sp<FlushingOutputState> mFlushingOutputState;
+#endif
 
     DISALLOW_EVIL_CONSTRUCTORS(ACodec);
 };
