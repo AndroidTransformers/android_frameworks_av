@@ -2171,7 +2171,7 @@ status_t OMXCodec::allocateOutputBuffersFromNativeWindow() {
                                         | GRALLOC_USAGE_HW_ION | GRALLOC_USAGE_HWC_HWOVERLAY);
 #else
     err = native_window_set_usage(
-            mNativeWindow.get(), usage | GRALLOC_USAGE_HW_TEXTURE | GRALLOC_USAGE_EXTERNAL_DISP);
+            mNativeWindow.get(), usage | GRALLOC_USAGE_HW_TEXTURE | GRALLOC_USAGE_EXTERNAL_DISP | GRALLOC_USAGE_HW_FIMC1);
 #endif
     if (err != 0) {
         ALOGE("native_window_set_usage failed: %s (%d)", strerror(-err), -err);

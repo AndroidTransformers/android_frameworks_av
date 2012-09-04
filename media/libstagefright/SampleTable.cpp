@@ -624,11 +624,6 @@ status_t SampleTable::findSyncSampleNear(
         return OK;
     }
 
-    if (mNumSyncSamples == 0) {
-        *sample_index = 0;
-        return OK;
-    }
-
     uint32_t left = 0;
     uint32_t right = mNumSyncSamples;
     while (left < right) {
