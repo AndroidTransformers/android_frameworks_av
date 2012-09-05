@@ -113,6 +113,10 @@ public:
 
         virtual status_t    setPlaybackRatePermille(int32_t rate) { return INVALID_OPERATION; }
         virtual bool        needsTrailingPadding() { return true; }
+#ifdef QCOM_HARDWARE
+        virtual ssize_t     sampleRate() const {return 0;};
+        virtual status_t    getTimeStamp(uint64_t *tstamp) {return 0;};
+#endif
     };
 
                         MediaPlayerBase() : mCookie(0), mNotify(0) {}
@@ -122,7 +126,7 @@ public:
 
     virtual status_t    setUID(uid_t uid) {
         return INVALID_OPERATION;
-    }
+	}
 
     virtual status_t    setDataSource(
             const char *url,
