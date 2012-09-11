@@ -219,7 +219,9 @@ class MediaPlayerService : public BnMediaPlayerService
         static  void            notify(void* cookie, int msg,
                                        int ext1, int ext2, const Parcel *obj);
         virtual status_t        dump(int fd, const Vector<String16>& args) const;
-
+#ifdef QCOM_HARDWARE
+        virtual ssize_t         sampleRate() const;
+#endif
     private:
                                 AudioCache();
 
@@ -439,3 +441,4 @@ private:
 }; // namespace android
 
 #endif // ANDROID_MEDIAPLAYERSERVICE_H
+

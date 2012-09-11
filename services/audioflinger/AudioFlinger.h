@@ -1493,9 +1493,6 @@ private:
                 const int                           mReqChannelCount;
                 const uint32_t                      mReqSampleRate;
                 ssize_t                             mBytesRead;
-#ifdef QCOM_HARDWARE
-                int16_t                             mInputSource;
-#endif
                 // sync event triggering actual audio capture. Frames read before this event will
                 // be dropped and therefore not read by the application.
                 sp<SyncEvent>                       mSyncStartEvent;
@@ -1503,6 +1500,9 @@ private:
                 // when < 0, maximum frames to drop before starting capture even if sync event is
                 // not received
                 ssize_t                             mFramestoDrop;
+#ifdef QCOM_HARDWARE
+                int16_t                             mInputSource;
+#endif
     };
 
     // server side of the client's IAudioRecord
@@ -2014,3 +2014,4 @@ private:
 }; // namespace android
 
 #endif // ANDROID_AUDIO_FLINGER_H
+

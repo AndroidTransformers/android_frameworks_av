@@ -21,6 +21,8 @@
 #include <stdio.h>
 #include <sys/types.h>
 #include <pthread.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
@@ -65,6 +67,23 @@ static int getCallingUid() {
 }
 
 // ----------------------------------------------------------------------------
+
+#if defined(BOARD_HAVE_HTC_FFC)
+#define HTC_SWITCH_CAMERA_FILE_PATH "/sys/android_camera2/htcwc"
+static void htcCameraSwitch(int cameraId)
+{
+    char buffer[16];
+    int fd;
+
+    if (access(HTC_SWITCH_CAMERA_FILE_PATH, W_OK) == 0) {
+        snprintf(buffer, sizeof(buffer), "%d", cameraId);
+
+        fd = open(HTC_SWITCH_CAMERA_FILE_PATH, O_WRONLY);
+        write(fd, buffer, strlen(buffer));
+        close(fd);
+    }
+}
+#endif
 
 // This is ugly and only safe if we never re-create the CameraService, but
 // should be ok for now.
@@ -156,6 +175,10 @@ sp<ICamera> CameraService::connect(
         ALOGI("Camera is disabled. connect X (pid %d) rejected", callingPid);
         return NULL;
     }
+
+#if defined(BOARD_HAVE_HTC_FFC)
+    htcCameraSwitch(cameraId);
+#endif
 
     Mutex::Autolock lock(mServiceLock);
     if (mClient[cameraId] != 0) {
@@ -369,7 +392,7 @@ CameraService::Client::Client(const sp<CameraService>& cameraService,
     // Enable zoom, error, focus, and metadata messages by default
     enableMsgType(CAMERA_MSG_ERROR | CAMERA_MSG_ZOOM | CAMERA_MSG_FOCUS
 #ifndef QCOM_HARDWARE
-                  | CAMERA_MSG_PREVIEW_METADATA
+                  | CAMERA_MSG_PREVIEW_METADATA | CAMERA_MSG_FOCUS_MOVE
 #endif
                   );
 
@@ -559,14 +582,6 @@ status_t CameraService::Client::setPreviewWindow(const sp<IBinder>& binder,
     if (binder == mSurface) {
         return NO_ERROR;
     }
-
-#ifdef QCOM_HARDWARE
-    // We've raised the max on QCOM targets, but use less for camera.
-    if (window != 0) {
-        result = window.get()->perform(window.get(),
-                        NATIVE_WINDOW_SET_MIN_UNDEQUEUED_BUFFER_COUNT, 2);
-    }
-#endif
 
     if (window != 0) {
         result = native_window_api_connect(window.get(), NATIVE_WINDOW_API_CAMERA);
@@ -1435,3 +1450,4 @@ status_t CameraService::dump(int fd, const Vector<String16>& args) {
 }
 
 }; // namespace android
+
